@@ -41,6 +41,11 @@ A clinical-grade, zero-setup interactive demonstration is hosted live on **Huggi
              └────────────┬────────────┘
                           │
              ┌────────────▼────────────┐
+             │ Anatomical Sanity & OOD │
+             │  Cranial Guardrail QA   │
+             └────────────┬────────────┘
+                          │ (Verified)
+             ┌────────────▼────────────┐
              │ Automated Skull Strip   │
              │   & 5% Margin CLAHE     │
              └────────────┬────────────┘
@@ -50,16 +55,16 @@ A clinical-grade, zero-setup interactive demonstration is hosted live on **Huggi
 ┌───────▼────────────────┐         ┌────────▼────────────────┐
 │   Histopathological    │         │  Pixel-Level Boundary   │
 │   Tumor Classification │         │  Contour Segmentation   │
-│ (Glioma/Mening/Pit/Norm)│         │     (Dice = 0.9414)     │
+│ (Glioma/Mening/Pit/Norm)│        │     (Dice = 0.9414)     │
 └───────┬────────────────┘         └────────┬────────────────┘
         │                                   │
         └─────────────────┬─────────────────┘
                           │
              ┌────────────▼────────────┐
              │  Morphometric Analytics │
-             │  • Estimated Area (mm²) │
+             │  • Estimated Area (cm²) │
              │  • % Cranial Burden     │
-             │  • Spatial Bounding Box │
+             │  • Single Primary Focus │
              └─────────────────────────┘
 ```
 
