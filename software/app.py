@@ -72,6 +72,72 @@ def apply_clahe(image: np.ndarray) -> np.ndarray:
     cl = clahe.apply(l)
     return cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2RGB)
 
+def validate_cranial_mri(image: np.ndarray) -> tuple:
+    """
+    Validates whether an uploaded image possesses typical cranial MRI characteristics:
+    1. Grayscale distribution (low color variance across RGB channels)
+    2. Dark air/scanner background at outer margins
+    3. Anatomically plausible brain parenchyma area and elliptical aspect ratio
+    """
+    if image is None or image.size == 0:
+        return False, "Empty or invalid image data."
+
+    # 1. Grayscale check (cranial MRIs are grayscale; colored images are non-medical/photos)
+    if len(image.shape) == 3 and image.shape[2] == 3:
+        r, g, b = image[:, :, 0], image[:, :, 1], image[:, :, 2]
+        color_diff = np.mean(np.abs(r.astype(float) - g.astype(float))) + \
+                     np.mean(np.abs(g.astype(float) - b.astype(float)))
+        if color_diff > 18.0:
+            return False, "Colored non-medical image detected. Please upload a grayscale cranial MRI."
+
+    # Convert to grayscale for anatomical analysis
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image.copy()
+
+    h, w = gray.shape[:2]
+    if h < 64 or w < 64:
+        return False, "Image resolution too low for diagnostic inference."
+
+    # 2. Scanner background margin check (corners must be dark air perimeter in cranial scans)
+    c_size = max(5, int(min(h, w) * 0.05))
+    tl = np.mean(gray[:c_size, :c_size])
+    tr = np.mean(gray[:c_size, -c_size:])
+    bl = np.mean(gray[-c_size:, :c_size])
+    br = np.mean(gray[-c_size:, -c_size:])
+    corner_avg = (tl + tr + bl + br) / 4.0
+
+    if corner_avg > 95.0:
+        return False, "Non-cranial background detected. MRI scans require a dark outer air perimeter."
+
+    # 3. Contour & Anatomical Area Ratio
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return False, "No anatomical cranial structure detected."
+
+    c = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(c)
+    total_area = h * w
+    area_ratio = area / total_area
+
+    # Cranium normally occupies between 10% and 95% of the FOV
+    if area_ratio < 0.10 or area_ratio > 0.95:
+        return False, "Image morphology does not match cranial cross-section geometry."
+
+    # Aspect ratio check
+    x, y, cw, ch = cv2.boundingRect(c)
+    aspect_ratio = float(cw) / max(1, ch)
+    if aspect_ratio < 0.55 or aspect_ratio > 1.65:
+        return False, "Contour geometry is inconsistent with cranial anatomy."
+
+    return True, "Valid Cranial MRI"
+
 try:
     import spaces
     gpu_decorator = spaces.GPU
@@ -99,6 +165,32 @@ def predict_mri(input_image):
         orig_np = np.array(input_image)
         if len(orig_np.shape) == 2:
             orig_np = cv2.cvtColor(orig_np, cv2.COLOR_GRAY2RGB)
+
+    # Anatomic & Radiomic Input Validation (OOD / Unknown image rejection)
+    is_valid, validation_msg = validate_cranial_mri(orig_np)
+    if not is_valid:
+        alert_card = f"""
+        <div style="background: #ffffff; border: 1px solid #fed7aa; border-left: 5px solid #f97316; border-radius: 12px; padding: 18px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.8px; color: #ea580c; font-weight: 700;">Validation Notice</span>
+                    <h2 style="margin: 4px 0 0 0; color: #0f172a; font-size: 1.45rem; font-weight: 700;">Non-Cranial / Unknown Image</h2>
+                </div>
+                <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 6px 14px; text-align: center;">
+                    <span style="font-size: 0.7rem; color: #ea580c; font-weight: 600;">Status</span>
+                    <div style="font-size: 1.1rem; font-weight: 800; color: #c2410c; line-height: 1.1;">Rejected</div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #ffedd5; color: #475569; font-size: 0.9rem; line-height: 1.5;">
+                <p style="margin: 0 0 6px 0; color: #9a3412; font-weight: 600;">⚠️ {validation_msg}</p>
+                <p style="margin: 0; font-size: 0.85rem; color: #64748b;">
+                    This diagnostic AI is calibrated strictly for cranial brain MRI slices (Axial, Coronal, Sagittal). Non-medical photos, everyday objects, and non-cranial images are rejected to maintain diagnostic integrity.
+                </p>
+            </div>
+        </div>
+        """
+        return orig_np, alert_card
 
     # Preprocessing
     cropped_img, brain_area_px = crop_brain_contour(orig_np)
