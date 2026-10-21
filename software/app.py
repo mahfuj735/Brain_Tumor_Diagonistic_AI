@@ -256,10 +256,10 @@ def predict_mri(input_image):
         accent = CLASS_HEX.get(top_label.lower(), '#ef4444')
         result_card = f"""
         <div style="background: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid {accent}; border-radius: 12px; padding: 18px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                 <div>
                     <span style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.8px; color: #64748b; font-weight: 600;">Diagnosis Result</span>
-                    <h2 style="margin: 4px 0 0 0; color: #0f172a; font-size: 1.6rem; font-weight: 700;">{top_label} Tumor</h2>
+                    <h2 style="margin: 4px 0 0 0; color: #0f172a; font-size: 1.5rem; font-weight: 700;">{top_label} Tumor</h2>
                 </div>
                 <div style="background: {accent}15; border: 1px solid {accent}40; border-radius: 8px; padding: 6px 14px; text-align: center;">
                     <span style="font-size: 0.7rem; color: #64748b; font-weight: 600;">Confidence</span>
@@ -267,16 +267,16 @@ def predict_mri(input_image):
                 </div>
             </div>
             
-            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f5f9; display: flex; gap: 24px; color: #334155;">
-                <div>
+            <div class="metric-flex-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f5f9; display: flex; flex-wrap: wrap; gap: 20px; color: #334155;">
+                <div style="min-width: 90px;">
                     <div style="font-size: 0.75rem; color: #64748b;">Estimated Area</div>
                     <div style="font-size: 1.15rem; font-weight: 700; color: #0f172a;">{tumor_area_cm2:.2f} cm²</div>
                 </div>
-                <div>
+                <div style="min-width: 90px;">
                     <div style="font-size: 0.75rem; color: #64748b;">Brain Occupied</div>
                     <div style="font-size: 1.15rem; font-weight: 700; color: #0f172a;">{cranial_pct:.1f}%</div>
                 </div>
-                <div>
+                <div style="min-width: 90px;">
                     <div style="font-size: 0.75rem; color: #64748b;">Boundary Status</div>
                     <div style="font-size: 0.95rem; font-weight: 600; color: {accent}; margin-top: 2px;">Delineated</div>
                 </div>
@@ -286,10 +286,10 @@ def predict_mri(input_image):
     else:
         result_card = """
         <div style="background: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid #10b981; border-radius: 12px; padding: 18px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                 <div>
                     <span style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.8px; color: #64748b; font-weight: 600;">Diagnosis Result</span>
-                    <h2 style="margin: 4px 0 0 0; color: #0f172a; font-size: 1.6rem; font-weight: 700;">Healthy Brain (No Tumor)</h2>
+                    <h2 style="margin: 4px 0 0 0; color: #0f172a; font-size: 1.5rem; font-weight: 700;">Healthy Brain (No Tumor)</h2>
                 </div>
                 <div style="background: #10b98115; border: 1px solid #10b98140; border-radius: 8px; padding: 6px 14px; text-align: center;">
                     <span style="font-size: 0.7rem; color: #64748b; font-weight: 600;">Confidence</span>
@@ -320,7 +320,7 @@ custom_css = """
     margin-bottom: 12px;
 }
 .simple-header h1 {
-    font-size: 1.9rem;
+    font-size: 1.85rem;
     font-weight: 700;
     color: #0f172a;
     margin: 0;
@@ -345,6 +345,34 @@ custom_css = """
 .preset-row button {
     border-radius: 6px !important;
     font-size: 0.85rem !important;
+}
+
+/* Mobile & Tablet Responsiveness */
+@media (max-width: 640px) {
+    .gradio-container {
+        padding: 6px !important;
+    }
+    .simple-header {
+        padding: 12px 0 8px 0 !important;
+    }
+    .simple-header h1 {
+        font-size: 1.35rem !important;
+    }
+    .simple-header p {
+        font-size: 0.85rem !important;
+    }
+    .preset-row {
+        display: grid !important;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 6px !important;
+    }
+    .preset-row button {
+        width: 100% !important;
+        padding: 8px 4px !important;
+    }
+    .metric-flex-row {
+        gap: 12px !important;
+    }
 }
 """
 
