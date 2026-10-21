@@ -116,7 +116,6 @@ def predict_mri(input_image):
     tumor_area_px = 0
 
     if results.boxes is not None and len(results.boxes) > 0 and results.masks is not None:
-        detected = True
         boxes = results.boxes
         confs = boxes.conf.cpu().numpy()
         classes = boxes.cls.cpu().numpy()
@@ -126,42 +125,35 @@ def predict_mri(input_image):
         top_cls_id = int(classes[best_idx])
         raw_name = CLASS_NAMES.get(top_cls_id, f"Class {top_cls_id}")
 
-        if raw_name.lower() in ['no_tumor', 'notumor']:
-            detected = False
-            top_label = "Healthy Brain (No Tumor)"
-        else:
+        # Clinically authentic filter: must be >= 40% confidence and not healthy control
+        if raw_name.lower() not in ['no_tumor', 'notumor'] and top_confidence >= 0.40:
+            detected = True
             top_label = raw_name.capitalize()
+            color = CLASS_COLORS.get(raw_name.lower(), (239, 68, 68))
 
-        # Draw segmentation mask
-        mask_data = results.masks.data.cpu().numpy()
-        for idx in range(len(confs)):
-            cls_id = int(classes[idx])
-            c_name = CLASS_NAMES.get(cls_id, f"Class {cls_id}").lower()
-            if c_name in ['no_tumor', 'notumor']:
-                continue
-
-            color = CLASS_COLORS.get(c_name, (239, 68, 68))
-            single_mask = cv2.resize(mask_data[idx], (w, h), interpolation=cv2.INTER_LINEAR)
+            # Only segment the primary confirmed tumor
+            mask_data = results.masks.data.cpu().numpy()
+            single_mask = cv2.resize(mask_data[best_idx], (w, h), interpolation=cv2.INTER_LINEAR)
             bin_mask = (single_mask > 0.5).astype(np.uint8)
-            
-            cur_area = int(np.sum(bin_mask))
-            if idx == best_idx or cur_area > tumor_area_px:
-                tumor_area_px = cur_area
+            tumor_area_px = int(np.sum(bin_mask))
 
-            # Contour overlay
+            # Draw clean boundary contours
             contours, _ = cv2.findContours(bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             overlay = annotated.copy()
             cv2.drawContours(overlay, contours, -1, color, thickness=cv2.FILLED)
             cv2.addWeighted(overlay, 0.35, annotated, 0.65, 0, annotated)
             cv2.drawContours(annotated, contours, -1, color, thickness=2)
 
-            # Bounding box & tag
-            bx1, by1, bx2, by2 = boxes.xyxy[idx].cpu().numpy().astype(int)
+            # Single clear bounding box and label tag
+            bx1, by1, bx2, by2 = boxes.xyxy[best_idx].cpu().numpy().astype(int)
             cv2.rectangle(annotated, (bx1, by1), (bx2, by2), color, 2)
-            tag = f"{c_name.capitalize()} {confs[idx]*100:.0f}%"
+            tag = f"{top_label} {top_confidence*100:.0f}%"
             (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
             cv2.rectangle(annotated, (bx1, max(0, by1 - th - 6)), (bx1 + tw + 6, max(0, by1)), color, -1)
             cv2.putText(annotated, tag, (bx1 + 3, max(0, by1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+        else:
+            detected = False
+            top_label = "Healthy Brain (No Tumor)"
 
     # Morphometry calculations (using standard 0.85 mm/px)
     tumor_area_cm2 = (tumor_area_px * (0.85 ** 2)) / 100.0
