@@ -44,28 +44,33 @@ A clinical-grade, zero-setup interactive demonstration is hosted live on **Huggi
              │ Anatomical Sanity & OOD │
              │  Cranial Guardrail QA   │
              └────────────┬────────────┘
-                          │ (Verified)
+                          │ (Pass Verification)
              ┌────────────▼────────────┐
-             │ Automated Skull Strip   │
-             │   & 5% Margin CLAHE     │
+             │  Adaptive Skull Strip   │
+             │   & Dual-Branch Extract │
+             └──────┬───────────┬──────┘
+                    │           │
+       ┌────────────▼─────┐   ┌─▼───────────────┐
+       │ Branch A: Native │   │ Branch B: CLAHE │
+       │  Cropped Scan    │   │  Radiomic (8x8) │
+       └────────────┬─────┘   └─┬───────────────┘
+                    │           │
+             ┌──────▼───────────▼──────┐
+             │  Edge Dual-Pass Engine  │
+             │  (Floor Conf >= 0.15)   │
              └────────────┬────────────┘
                           │
-        ┌─────────────────┴─────────────────┐
-        │                                   │
-┌───────▼────────────────┐         ┌────────▼────────────────┐
-│   Histopathological    │         │  Pixel-Level Boundary   │
-│   Tumor Classification │         │  Contour Segmentation   │
-│ (Glioma/Mening/Pit/Norm)│        │     (Dice = 0.9414)     │
-└───────┬────────────────┘         └────────┬────────────────┘
-        │                                   │
-        └─────────────────┬─────────────────┘
-                          │
              ┌────────────▼────────────┐
-             │  Morphometric Analytics │
-             │  • Estimated Area (cm²) │
-             │  • % Cranial Burden     │
-             │  • Single Primary Focus │
-             └─────────────────────────┘
+             │ 3-Tier Diagnostic Triage│
+             │ & Cross-Branch Arbitrate│
+             └──────┬─────┬─────┬──────┘
+      ┌─────────────┘     │     └─────────────┐
+      │ (>= 40%)          │ (18% - 39%)       │ (< 18%)
+┌─────▼──────────┐ ┌──────▼──────────┐ ┌──────▼──────────┐
+│ Tier 1: Tumor  │ │ Tier 2: Low-    │ │ Tier 3: Healthy │
+│ Delineated Mask│ │ Contrast Focus  │ │ Certified Clear │
+│ & Area (cm²)   │ │ Clinical Alert  │ │ (>99% Normal)   │
+└────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
 ---
