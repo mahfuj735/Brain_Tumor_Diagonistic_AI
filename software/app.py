@@ -196,64 +196,69 @@ def predict_mri(input_image):
     cropped_img, brain_area_px = crop_brain_contour(orig_np)
     enhanced_img = apply_clahe(cropped_img)
 
-    # Model inference
-    results = model(enhanced_img, conf=0.25, verbose=False)[0]
+    # Dual-Pass Inference (Raw Normalized Cropped + Contrast-Enhanced CLAHE)
+    # This prevents subtle skull-base or infiltrative lesions from being washed out by CLAHE
+    res_cr = model(cropped_img, conf=0.15, verbose=False)[0]
+    res_enh = model(enhanced_img, conf=0.15, verbose=False)[0]
+
+    def parse_candidates(results_obj, source_tag):
+        candidates = []
+        if results_obj.boxes is not None and len(results_obj.boxes) > 0 and results_obj.masks is not None:
+            boxes = results_obj.boxes
+            confs = boxes.conf.cpu().numpy()
+            classes = boxes.cls.cpu().numpy()
+            masks_data = results_obj.masks.data.cpu().numpy()
+            for idx in range(len(confs)):
+                conf = float(confs[idx])
+                cls_id = int(classes[idx])
+                name = CLASS_NAMES.get(cls_id, f"Class {cls_id}").lower()
+                if name not in ['no_tumor', 'notumor'] and conf >= 0.15:
+                    candidates.append({
+                        'conf': conf,
+                        'cls_id': cls_id,
+                        'name': name,
+                        'box': boxes.xyxy[idx].cpu().numpy().astype(int),
+                        'mask': masks_data[idx],
+                        'source': source_tag
+                    })
+        return candidates
+
+    all_candidates = parse_candidates(res_cr, "raw") + parse_candidates(res_enh, "clahe")
+    best_candidate = max(all_candidates, key=lambda c: c['conf']) if all_candidates else None
+    best_conf = best_candidate['conf'] if best_candidate else 0.0
 
     annotated = enhanced_img.copy()
     h, w = enhanced_img.shape[:2]
 
-    detected = False
-    top_label = "Healthy Brain"
-    top_confidence = 0.99
-    tumor_area_px = 0
+    # Diagnostic Tier Evaluation
+    if best_candidate is not None and best_conf >= 0.40:
+        # Tier 1: Confirmed Primary Tumor (High Confidence >= 40%)
+        top_label = best_candidate['name'].capitalize()
+        top_confidence = best_conf
+        color = CLASS_COLORS.get(best_candidate['name'], (239, 68, 68))
+        accent = CLASS_HEX.get(best_candidate['name'], '#ef4444')
 
-    if results.boxes is not None and len(results.boxes) > 0 and results.masks is not None:
-        boxes = results.boxes
-        confs = boxes.conf.cpu().numpy()
-        classes = boxes.cls.cpu().numpy()
-        best_idx = int(np.argmax(confs))
+        # Delineate mask
+        single_mask = cv2.resize(best_candidate['mask'], (w, h), interpolation=cv2.INTER_LINEAR)
+        bin_mask = (single_mask > 0.5).astype(np.uint8)
+        tumor_area_px = int(np.sum(bin_mask))
 
-        top_confidence = float(confs[best_idx])
-        top_cls_id = int(classes[best_idx])
-        raw_name = CLASS_NAMES.get(top_cls_id, f"Class {top_cls_id}")
+        contours, _ = cv2.findContours(bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        overlay = annotated.copy()
+        cv2.drawContours(overlay, contours, -1, color, thickness=cv2.FILLED)
+        cv2.addWeighted(overlay, 0.35, annotated, 0.65, 0, annotated)
+        cv2.drawContours(annotated, contours, -1, color, thickness=2)
 
-        # Clinically authentic filter: must be >= 40% confidence and not healthy control
-        if raw_name.lower() not in ['no_tumor', 'notumor'] and top_confidence >= 0.40:
-            detected = True
-            top_label = raw_name.capitalize()
-            color = CLASS_COLORS.get(raw_name.lower(), (239, 68, 68))
+        bx1, by1, bx2, by2 = best_candidate['box']
+        cv2.rectangle(annotated, (bx1, by1), (bx2, by2), color, 2)
+        tag = f"{top_label} {top_confidence*100:.0f}%"
+        (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+        cv2.rectangle(annotated, (bx1, max(0, by1 - th - 6)), (bx1 + tw + 6, max(0, by1)), color, -1)
+        cv2.putText(annotated, tag, (bx1 + 3, max(0, by1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
 
-            # Only segment the primary confirmed tumor
-            mask_data = results.masks.data.cpu().numpy()
-            single_mask = cv2.resize(mask_data[best_idx], (w, h), interpolation=cv2.INTER_LINEAR)
-            bin_mask = (single_mask > 0.5).astype(np.uint8)
-            tumor_area_px = int(np.sum(bin_mask))
+        tumor_area_cm2 = (tumor_area_px * (0.85 ** 2)) / 100.0
+        cranial_pct = (tumor_area_px / max(1, brain_area_px)) * 100.0
 
-            # Draw clean boundary contours
-            contours, _ = cv2.findContours(bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            overlay = annotated.copy()
-            cv2.drawContours(overlay, contours, -1, color, thickness=cv2.FILLED)
-            cv2.addWeighted(overlay, 0.35, annotated, 0.65, 0, annotated)
-            cv2.drawContours(annotated, contours, -1, color, thickness=2)
-
-            # Single clear bounding box and label tag
-            bx1, by1, bx2, by2 = boxes.xyxy[best_idx].cpu().numpy().astype(int)
-            cv2.rectangle(annotated, (bx1, by1), (bx2, by2), color, 2)
-            tag = f"{top_label} {top_confidence*100:.0f}%"
-            (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-            cv2.rectangle(annotated, (bx1, max(0, by1 - th - 6)), (bx1 + tw + 6, max(0, by1)), color, -1)
-            cv2.putText(annotated, tag, (bx1 + 3, max(0, by1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-        else:
-            detected = False
-            top_label = "Healthy Brain (No Tumor)"
-
-    # Morphometry calculations (using standard 0.85 mm/px)
-    tumor_area_cm2 = (tumor_area_px * (0.85 ** 2)) / 100.0
-    cranial_pct = (tumor_area_px / max(1, brain_area_px)) * 100.0
-
-    # Build Clean, Minimalist Result Card
-    if detected and tumor_area_px > 0:
-        accent = CLASS_HEX.get(top_label.lower(), '#ef4444')
         result_card = f"""
         <div style="background: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid {accent}; border-radius: 12px; padding: 18px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
@@ -283,7 +288,70 @@ def predict_mri(input_image):
             </div>
         </div>
         """
+
+    elif best_candidate is not None and best_conf >= 0.18:
+        # Tier 2: Suspicious / Borderline Lesion Focus (18% <= conf < 40%)
+        # Catches faint skull-base / infiltrative low-contrast lesions
+        suspected_name = best_candidate['name'].capitalize()
+        amber_color = (245, 158, 11)  # Amber
+        accent = '#f59e0b'
+
+        single_mask = cv2.resize(best_candidate['mask'], (w, h), interpolation=cv2.INTER_LINEAR)
+        bin_mask = (single_mask > 0.4).astype(np.uint8)
+        tumor_area_px = int(np.sum(bin_mask))
+
+        contours, _ = cv2.findContours(bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        overlay = annotated.copy()
+        cv2.drawContours(overlay, contours, -1, amber_color, thickness=cv2.FILLED)
+        cv2.addWeighted(overlay, 0.25, annotated, 0.75, 0, annotated)
+        cv2.drawContours(annotated, contours, -1, amber_color, thickness=2)
+
+        bx1, by1, bx2, by2 = best_candidate['box']
+        cv2.rectangle(annotated, (bx1, by1), (bx2, by2), amber_color, 2)
+        tag = f"Suspicious {best_conf*100:.0f}%"
+        (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+        cv2.rectangle(annotated, (bx1, max(0, by1 - th - 6)), (bx1 + tw + 6, max(0, by1)), amber_color, -1)
+        cv2.putText(annotated, tag, (bx1 + 3, max(0, by1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
+
+        tumor_area_cm2 = (tumor_area_px * (0.85 ** 2)) / 100.0
+
+        result_card = f"""
+        <div style="background: #ffffff; border: 1px solid #fef3c7; border-left: 5px solid {accent}; border-radius: 12px; padding: 18px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <div>
+                    <span style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.8px; color: #d97706; font-weight: 700;">Clinical Advisory</span>
+                    <h2 style="margin: 4px 0 0 0; color: #0f172a; font-size: 1.45rem; font-weight: 700;">Suspicious / Low-Contrast Lesion Focus</h2>
+                </div>
+                <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 6px 14px; text-align: center;">
+                    <span style="font-size: 0.7rem; color: #d97706; font-weight: 600;">Status</span>
+                    <div style="font-size: 1.15rem; font-weight: 800; color: #b45309; line-height: 1.1;">Equivocal ({best_conf*100:.1f}%)</div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #fef3c7; color: #475569; font-size: 0.88rem; line-height: 1.5;">
+                <p style="margin: 0 0 6px 0; color: #92400e; font-weight: 600;">
+                    ⚠️ Faint radiomic focus detected (Suspected morphology: {suspected_name}).
+                </p>
+                <p style="margin: 0; color: #64748b; font-size: 0.84rem;">
+                    Due to subtle T1 contrast, partial volume effects, or skull-base anatomy, this lesion has borderline confidence. Clinical correlation with adjacent superior MRI slices or contrast-enhanced T2/FLAIR sequences is recommended to confirm or rule out infiltrative pathology.
+                </p>
+            </div>
+            
+            <div class="metric-flex-row" style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #fef3c7; display: flex; flex-wrap: wrap; gap: 20px; color: #334155;">
+                <div style="min-width: 90px;">
+                    <div style="font-size: 0.75rem; color: #64748b;">Suspicious Area</div>
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #0f172a;">{tumor_area_cm2:.2f} cm²</div>
+                </div>
+                <div style="min-width: 90px;">
+                    <div style="font-size: 0.75rem; color: #64748b;">Recommendation</div>
+                    <div style="font-size: 0.95rem; font-weight: 600; color: {accent}; margin-top: 2px;">Review Volumetric Series</div>
+                </div>
+            </div>
+        </div>
+        """
+
     else:
+        # Tier 3: Healthy Brain (< 18% or no detections)
         result_card = """
         <div style="background: #ffffff; border: 1px solid #e2e8f0; border-left: 5px solid #10b981; border-radius: 12px; padding: 18px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
